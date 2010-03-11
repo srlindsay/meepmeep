@@ -104,9 +104,9 @@ int buf_chain_send(int fd, buf_t **out) {
 	buf_t *b;
 	while (*out) {
 		b = *out;
-		to_send = b->end - b->curr;
+		to_send = b->curr - b->curr_out;
 
-		nb = send(fd, b->curr, to_send, 0);
+		nb = send(fd, b->curr_out, to_send, 0);
 		if (nb < 0) {
 			switch(errno) {
 				case EAGAIN:
@@ -117,7 +117,7 @@ int buf_chain_send(int fd, buf_t **out) {
 					return -errno;
 			}
 		}
-		b->curr += nb;
+		b->curr_out += nb;
 		total_sent += nb;
 		if (nb < to_send) {
 			return total_sent;
@@ -143,10 +143,9 @@ void conn_handler(int fd, short ev_type, void *data) {
 			conn->read_closed = 1; 
 			conn->want_read = 0;
 			conn->update_events = 1;
-		} else {
-			if (conn->read_handler) {
-				conn->read_handler(conn, &nb);
-			}
+		}
+		if (conn->read_handler) {
+			conn->read_handler(conn, &nb);
 		}
 	}
 
@@ -159,11 +158,15 @@ void conn_handler(int fd, short ev_type, void *data) {
 			conn->want_write = 0;
 			conn->update_events = 1;
 		}
+		if (conn->out == NULL) {
+			conn->want_write = 0;
+			conn->update_events = 1;
+			if (conn->send_and_close) {
+				conn->close_connection = 1;
+			}
+		}
 		if (conn->write_handler) {
 			conn->write_handler(conn, &nb);
-		}
-		if (conn->out == NULL && conn->send_and_close) {
-			conn->close_connection = 1;
 		}
 	}
 

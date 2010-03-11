@@ -19,6 +19,7 @@ struct buf_st {
 	char  *start;
 	char  *end;
 	char  *curr;
+	char  *curr_out;
 	buf_t *next;
 
 	int shadow:1;
@@ -31,6 +32,8 @@ void buf_free_chain(buf_t *b);
 int buf_chain_len(buf_t *b);
 void buf_print_chain(buf_t *b);
 void buf_print_chain_slice(chain_slice_t *c);
+
+buf_t* buf_output_chain(buf_t *b);
 
 #endif
 

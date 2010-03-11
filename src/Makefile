@@ -5,6 +5,7 @@ SRCS=logging.c \
 	 buf.c \
 	 req.c \
 	 parser.c \
+	 proxy.c \
 	 conn.c
 
 OBJS=$(SRCS:.c=.o)

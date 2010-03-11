@@ -18,7 +18,7 @@ buf_t* buf_new(void) {
 		b->end = b->start + BUF_SIZE;
 	}
 	b->shadow = 0;
-	b->curr = b->start;
+	b->curr = b->curr_out = b->start;
 	b->next = NULL;
 	return b;
 }
@@ -33,8 +33,8 @@ buf_t* buf_new_shadow(char *start, char *end) {
 		if (!b) { return NULL; }
 		b->shadow = 1;
 	}
-	b->start = b->curr = start;
-	b->end = end;
+	b->start = b->curr_out = start;
+	b->end = b->curr = end;
 	b->next = NULL;
 	return b;
 }
@@ -92,3 +92,4 @@ void buf_print_chain_slice(chain_slice_t *c) {
 		printf ("%.*s", len, start);
 	}
 }
+

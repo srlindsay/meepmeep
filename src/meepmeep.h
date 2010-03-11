@@ -20,6 +20,7 @@
 #include <logging.h>
 #include <str.h>
 #include <parser.h>
+#include <proxy.h>
 
 typedef struct conn_st conn_t;
 typedef struct req_st req_t;
@@ -49,14 +50,15 @@ struct conn_st {
 	err_handler_t *error_handler;
 
 	req_t *req;
+	void *data;
 
-	int read_closed:1;
-	int close_connection:1;
+	unsigned read_closed:1;
+	unsigned close_connection:1;
 
-	int want_read:1;
-	int want_write:1;
-	int update_events:1;
-	int send_and_close:1;
+	unsigned want_read:1;
+	unsigned want_write:1;
+	unsigned update_events:1;
+	unsigned send_and_close:1;
 
 	conn_t *next;
 };

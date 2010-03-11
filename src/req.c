@@ -52,7 +52,9 @@ void req_read_request(conn_t *conn, void *data) {
 		printf ("[%s] finished parsing\n", __FUNCTION__);
 		conn->req->bufs = conn->in;
 		conn->in = NULL;
-		req_send_test_response(conn);
+		conn->want_read = 0;
+		conn->update_events = 1;
+		proxy_init("127.0.0.1", 80);
 	}
 }
 
