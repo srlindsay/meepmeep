@@ -121,10 +121,8 @@ int buf_chain_send(int fd, buf_t **out) {
 		b = *out;
 		to_send = b->last - b->first;
 
-		printf ("[%s] fd: %d, b: %p, b->first: %p, b->last: %p, to_send: %d\n", 
+		debug("[%s] fd: %d, b: %p, b->first: %p, b->last: %p, to_send: %d\n", 
 				__FUNCTION__, fd, b, b->first, b->last, to_send);
-
-		printf ("[%s] sending '%.*s'\n", __FUNCTION__, to_send, b->first);
 
 		nb = send(fd, b->first, to_send, 0);
 		if (nb < 0) {
@@ -151,7 +149,7 @@ int buf_chain_send(int fd, buf_t **out) {
 
 void conn_handler(int fd, short ev_type, void *data) {
 	conn_t *conn = data;
-	log_write (LOG_DEBUG, "data to recv on %d\n", fd);
+	debug("[%s] data to recv on %d\n", __FUNCTION__, fd);
 	
 	if (ev_type & EV_READ) {
 		int nb;
@@ -242,7 +240,8 @@ int conn_send_response(conn_t *c, http_response_code_t code, buf_t *out) {
 		b->next = out;
 	}
 
-	c->out = out;
+	conn_send_and_close(c, b);
+	return 0;
 }
 
 int conn_send_and_close(conn_t *c, buf_t *out) {
@@ -262,7 +261,7 @@ int conn_read(conn_t *conn, handler_t *handler) {
 	return 0;
 }
 
-void conn_read_done(conn_t *conn) {
+int conn_read_done(conn_t *conn) {
 	conn->read_handler = NULL;
 	if (conn->want_read) {
 		conn->want_read = 0;

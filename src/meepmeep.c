@@ -1,7 +1,5 @@
 #include <meepmeep.h>
 
-
-
 int setup_socket(const char *ip, const short port) {
 	int sock, res;
 	struct sockaddr_in addr;

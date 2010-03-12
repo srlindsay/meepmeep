@@ -2,6 +2,7 @@
 #define _CONN_H
 
 #include <meepmeep.h>
+#include <http.h>
 typedef struct conn_st conn_t;
 
 typedef void (handler_t)(conn_t *conn, void *data);
@@ -51,7 +52,11 @@ int conn_register_events(conn_t *conn);
 
 int conn_write_chain(conn_t *c, buf_t *b);
 
+int conn_send_response(conn_t *c, http_response_code_t code, buf_t *out);
+int conn_send_and_close(conn_t *c, buf_t *out);
+
 int conn_read(conn_t *c, handler_t *handler);
+int conn_read_done(conn_t *c);
 
 #endif
 

@@ -140,7 +140,7 @@ void req_read_request(conn_t *conn, void *data) {
 				break;
 			default:
 				/* some error condition */
-				conn_send_response(res);
+				conn_send_response(conn, res, NULL);
 				conn->close_connection = 1;
 				return;
 		}
@@ -151,7 +151,7 @@ void req_read_request(conn_t *conn, void *data) {
 	r->uri = r->parser.uri.data;
 	r->uri[r->parser.uri.len] = '\0';
 	conn->in = NULL;
-	conn_read_done();
+	conn_read_done(conn);
 	req_init_proxy(r);
 }
 
@@ -161,7 +161,7 @@ void req_read_init_request(conn_t *conn, void *data) {
 	conn->data = r = req_new();
 	if (!r) {
 		log_write(LOG_ERROR, "[%s] failed to allocate request\n", __FUNCTION__);
-		conn_send_response(HTTP_INTERNAL_SERVER_ERROR);
+		conn_send_response(conn, HTTP_INTERNAL_SERVER_ERROR, NULL);
 		return;
 	}
 	r->conn = conn;
