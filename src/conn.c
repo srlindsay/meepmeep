@@ -20,7 +20,10 @@ void conn_free(conn_t *c) {
 }
 
 void conn_close(conn_t *conn) {
-	event_del(&conn->ev);
+	if (conn->event_registered) {
+		event_del(&conn->ev);
+		conn->event_registered = 0;
+	}
 	if (conn->close_handler) {
 		conn->close_handler(conn, NULL);
 	}
@@ -29,7 +32,9 @@ void conn_close(conn_t *conn) {
 }
 
 int conn_register_events(conn_t *conn) {
-	event_del(&conn->ev);
+	if (conn->event_registered) {
+		event_del(&conn->ev);
+	}
 	short flags = EV_PERSIST;
 	flags |= conn->want_write ? EV_WRITE : 0;
 	flags |= conn->want_read ? EV_READ : 0;
@@ -38,7 +43,17 @@ int conn_register_events(conn_t *conn) {
 		conn->tv.tv_sec = conn->timeout;
 		conn->tv.tv_usec = 0;
 	}
+	conn->event_registered = 1;
 	return event_add(&conn->ev, conn->timeout ? &conn->tv : NULL);
+}
+
+int conn_write_chain(conn_t *c, buf_t *b) {
+	buf_append_chain(&c->out, b);
+	if (!c->want_write) {
+		c->want_write = 1;
+		conn_register_events(c);
+	}
+	return 0;
 }
 
 int buf_chain_recv(int fd, buf_t **in) {
@@ -55,7 +70,7 @@ int buf_chain_recv(int fd, buf_t **in) {
 		int to_recv;
 		while (1) {
 			/* find the first non-full buffer in the chain */
-			to_recv = b->end - b->curr;
+			to_recv = b->end - b->last;
 			if (to_recv) {break;}
 			if (b->next) {
 				b = b->next;
@@ -68,7 +83,7 @@ int buf_chain_recv(int fd, buf_t **in) {
 		}
 
 		int nb;
-		nb = recv(fd, b->curr, to_recv, 0);
+		nb = recv(fd, b->last, to_recv, 0);
 		if (nb < 0) {
 			switch (errno) {
 				case EAGAIN:
@@ -88,7 +103,7 @@ int buf_chain_recv(int fd, buf_t **in) {
 			break;
 		} else {
 			totalRead += nb;
-			b->curr += nb;
+			b->last += nb;
 			if (nb < to_recv) {
 				break;
 			}
@@ -104,9 +119,14 @@ int buf_chain_send(int fd, buf_t **out) {
 	buf_t *b;
 	while (*out) {
 		b = *out;
-		to_send = b->curr - b->curr_out;
+		to_send = b->last - b->first;
 
-		nb = send(fd, b->curr_out, to_send, 0);
+		printf ("[%s] fd: %d, b: %p, b->first: %p, b->last: %p, to_send: %d\n", 
+				__FUNCTION__, fd, b, b->first, b->last, to_send);
+
+		printf ("[%s] sending '%.*s'\n", __FUNCTION__, to_send, b->first);
+
+		nb = send(fd, b->first, to_send, 0);
 		if (nb < 0) {
 			switch(errno) {
 				case EAGAIN:
@@ -117,7 +137,7 @@ int buf_chain_send(int fd, buf_t **out) {
 					return -errno;
 			}
 		}
-		b->curr_out += nb;
+		b->first += nb;
 		total_sent += nb;
 		if (nb < to_send) {
 			return total_sent;
@@ -138,14 +158,20 @@ void conn_handler(int fd, short ev_type, void *data) {
 		nb = buf_chain_recv(fd, &conn->in);
 		if (nb < 0) {
 			conn->error_handler(conn, EV_READ, &nb);
-			conn->close_connection = 1;
+			goto close_connection;
 		} else if (nb == 0) { 
-			conn->read_closed = 1; 
+			if (conn->read_close_handler) {
+				conn->read_close_handler(conn, NULL);
+			}
 			conn->want_read = 0;
 			conn->update_events = 1;
-		}
-		if (conn->read_handler) {
-			conn->read_handler(conn, &nb);
+			if (conn->close_connection) {
+				goto close_connection;
+			}
+		} else {
+			if (conn->read_handler) {
+				conn->read_handler(conn, NULL);
+			}
 		}
 	}
 
@@ -162,7 +188,7 @@ void conn_handler(int fd, short ev_type, void *data) {
 			conn->want_write = 0;
 			conn->update_events = 1;
 			if (conn->send_and_close) {
-				conn->close_connection = 1;
+				goto close_connection;
 			}
 		}
 		if (conn->write_handler) {
@@ -174,18 +200,73 @@ void conn_handler(int fd, short ev_type, void *data) {
 		if (conn->timeout_handler) {
 			conn->timeout_handler(conn, NULL);
 		} else {
-			conn->close_connection = 1;
+			log_write(LOG_ERROR, "[%s] timeout on conn %p, but no timeout handler\n",
+					__FUNCTION__, conn);
+			goto close_connection;
 		}
 	}
+
+	if (conn->close_connection) goto close_connection;
 
 	if (conn->update_events) {
 		conn_register_events(conn);
 		conn->update_events = 0;
 	}
 
-	if (conn->close_connection) {
-		conn_close(conn);
-	}
+	return;
+
+close_connection:
+	conn_close(conn);
 }
 
+void conn_dummy_handler(conn_t *c, void *data) {
+	log_write(LOG_ERROR, "[%s] c: %p\n", __FUNCTION__, c);
+}
+
+int conn_send_response(conn_t *c, http_response_code_t code, buf_t *out) {
+	buf_t *b;
+	b = buf_new();
+	int sz = b->end - b->last;
+
+	const char *code_text = http_get_code_text(code);
+
+	int nb = snprintf(b->last, sz, "HTTP/1.1 %s %d\r\n", code_text, code);
+	if (nb > sz) {
+		log_write(LOG_ERROR, "[%s] buffer too small for response line!\n", __FUNCTION__);
+		b->last = b->end;
+	} else {
+		b->last += nb;
+	}
+
+	if (out) {
+		b->next = out;
+	}
+
+	c->out = out;
+}
+
+int conn_send_and_close(conn_t *c, buf_t *out) {
+	conn_write_chain(c, out);
+	c->read_handler = conn_dummy_handler;
+	c->read_close_handler = conn_dummy_handler;
+	c->send_and_close = 1;
+	return 0;
+}
+
+int conn_read(conn_t *conn, handler_t *handler) {
+	conn->read_handler = handler;
+	if (!conn->want_read) {
+		conn->want_read = 1;
+		conn_register_events(conn);
+	}
+	return 0;
+}
+
+void conn_read_done(conn_t *conn) {
+	conn->read_handler = NULL;
+	if (conn->want_read) {
+		conn->want_read = 0;
+		conn_register_events(conn);
+	}
+}
 

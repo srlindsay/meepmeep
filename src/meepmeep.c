@@ -9,6 +9,10 @@ int setup_socket(const char *ip, const short port) {
 
 	sock = socket (AF_INET, SOCK_STREAM, 0);
 
+	int opt = 1;
+	socklen_t optlen = sizeof(int);
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, optlen);
+
 	memset (&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
@@ -48,11 +52,8 @@ void accept_handler(int fd, short ev_type, void *data) {
 
 	conn = conn_new();
 	conn->fd = newfd;
-	conn->read_handler = req_read_request;
-	conn->want_read = 1;
-	conn->timeout = 30;
-	if (conn_register_events(conn) < 0) {
-		log_write (0, "error trying to add event for fd: %d\n", newfd);
+
+	if (req_init_inbound(conn) < 0) {
 		conn_free(conn);
 	}
 }

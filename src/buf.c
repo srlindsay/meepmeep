@@ -18,7 +18,7 @@ buf_t* buf_new(void) {
 		b->end = b->start + BUF_SIZE;
 	}
 	b->shadow = 0;
-	b->curr = b->curr_out = b->start;
+	b->first = b->last = b->start;
 	b->next = NULL;
 	return b;
 }
@@ -33,8 +33,8 @@ buf_t* buf_new_shadow(char *start, char *end) {
 		if (!b) { return NULL; }
 		b->shadow = 1;
 	}
-	b->start = b->curr_out = start;
-	b->end = b->curr = end;
+	b->start = b->first = start;
+	b->end = b->last = end;
 	b->next = NULL;
 	return b;
 }
@@ -61,15 +61,15 @@ void buf_free_chain(buf_t *b) {
 int buf_chain_len(buf_t *b) {
 	int len = 0;
 	for ( ; b; b=b->next) {
-		len += (b->end - b->start);
+		len += (b->last - b->first);
 	}
 	return len;
 }
 
 void buf_print_chain(buf_t *b) {
 	while(b) {
-		int len = b->end - b->start;
-		printf ("%.*s", len, b->start);
+		int len = b->last - b->first;
+		printf ("%.*s", len, b->first);
 		b=b->next;
 	}
 }
@@ -91,5 +91,16 @@ void buf_print_chain_slice(chain_slice_t *c) {
 		}
 		printf ("%.*s", len, start);
 	}
+}
+
+void buf_append_chain(buf_t **head, buf_t *chain) {
+	buf_t *b;
+	if (*head == NULL) {
+		*head = chain;
+		return;
+	}
+
+	for (b=*head;b->next;b=b->next){}
+	b->next = chain;
 }
 

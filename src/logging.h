@@ -10,5 +10,9 @@ typedef enum {
 
 void log_write(loglevel_t level, char *fmt, ...);
 
+void debug(char *fmt, ...);
+
+#define DBGTRACE() log_write(LOG_DEBUG, "[%s]\n", __FUNCTION__)
+
 #endif
 

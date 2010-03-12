@@ -18,8 +18,8 @@ struct chain_slice_st {
 struct buf_st {
 	char  *start;
 	char  *end;
-	char  *curr;
-	char  *curr_out;
+	char  *first;
+	char  *last;
 	buf_t *next;
 
 	int shadow:1;
