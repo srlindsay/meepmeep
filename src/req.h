@@ -9,6 +9,7 @@
 #include <proxy.h>
 
 typedef struct req_st req_t;
+typedef struct req_proxy_info_st req_proxy_info_t;
 
 typedef void (req_handler_t)(req_t *r, void *data);
 
@@ -20,14 +21,19 @@ struct req_st {
 	req_t *next;
 	buf_t *bufs;
 
-	buf_t **proxy_chains;
-	int n_proxy_chains;
-	int used_proxy_chains;
 	req_handler_t *inbound_proxy_data_handler;
 	req_handler_t *proxy_finished_handler;
+	req_proxy_info_t *proxy_info;
 
-	proxy_t *proxies;
 	unsigned req_parsed:1;	
+	unsigned stream:1;
+};
+
+struct req_proxy_info_st {
+	proxy_t *p;
+	buf_t *chain;
+	unsigned finished:1;
+	req_proxy_info_t *next;
 };
 
 int req_init_inbound(conn_t *conn);

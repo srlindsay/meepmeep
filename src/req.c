@@ -1,5 +1,7 @@
 #include <meepmeep.h>
 
+#define FINISHED_PROXY ((proxy_t*)-1)
+
 char *test_response = 
 "HTTP/1.1 200 OK\r\n"
 "Server: meepmeep 0.1\r\n"
@@ -14,6 +16,20 @@ void req_send_test_response(conn_t *c) {
 	c->want_write = 1;
 	c->update_events = 1;
 	c->send_and_close = 1;
+}
+
+req_proxy_info_t *req_proxy_info_new(void) {
+	return calloc(1, sizeof(req_proxy_info_t));
+}
+
+void req_proxy_info_free(req_proxy_info_t* rpi) {
+	req_proxy_info_t *next;
+	next = rpi->next;
+	buf_free_chain(rpi->chain);
+	free(rpi);
+	if (next) {
+		req_proxy_info_free(next);
+	}
 }
 
 static req_t *req_pool;
@@ -35,26 +51,21 @@ void req_free(req_t *r) {
 	buf_free_chain(r->bufs);
 	r->bufs = NULL;
 
-	/* TODO: iterate over live proxies and close everything */
-
-	int i;
-	for (i=0; i < r->n_proxy_chains; i++) {
-		buf_free_chain(r->proxy_chains[i]);
-		r->proxy_chains[i] = NULL;
-	}
-	r->used_proxy_chains = 0;
+	req_proxy_info_free(r->proxy_info);
+	r->proxy_info = NULL;
 	r->inbound_proxy_data_handler = NULL;
 	r->proxy_finished_handler = NULL;
 
 	r->conn = NULL;
 	r->method = 0;
 	memset(&r->parser, 0, sizeof(parser_t));
-	r->proxies = NULL;
 	r->req_parsed = 0;
+	r->stream = 0;
 
 	r->next = req_pool;
 	req_pool = r;
 }
+
 
 void req_close_handler(conn_t *c, void *data) {
 	DBGTRACE();
@@ -74,23 +85,70 @@ void req_read_close_handler(conn_t *conn, void *data) {
 	conn->close_connection = 1;
 }
 
+static req_proxy_info_t* get_proxy_info(req_t *r, proxy_t *p) {
+	req_proxy_info_t *rpi;
+	for (rpi=r->proxy_info; rpi; rpi=rpi->next) {
+		if (rpi->p == p) {
+			return rpi;
+		}
+	}
+
+	log_write(LOG_ERROR, "[%s] r: %p, p: %p, no proxy info found\n",
+			__FUNCTION__, r, p);
+	return NULL;
+}
+
+static buf_t** get_proxy_chain(req_t *r, proxy_t *p) {
+	req_proxy_info_t *rpi;
+	rpi = get_proxy_info(r, p);
+	if (rpi) {
+		return &rpi->chain;
+	}
+	return NULL; 
+}
+
+void remove_content_length(buf_t *b) {
+	char *cl;
+	for (cl = b->first; cl < b->last; cl++) {
+		if (*cl == 'C') {
+			if (strncmp("Content-Length", cl, sizeof("Content-Length")-1) == 0) {
+				for (;cl < b->last, *cl != '\r'; cl++) {
+					*cl = ' ';
+				}
+			}
+		}
+	}
+}
+
 void req_inbound_proxy_data_handler(req_t *r, void *data) {
 	DBGTRACE();
 	proxy_t *p = data;
 	log_write(LOG_DEBUG, "[%s] p: %p\n", __FUNCTION__, p);
+
+	if (r->stream) {
+		buf_t **chain = get_proxy_chain(r, p);
+		if (!chain) { return; }
+		remove_content_length(*chain);
+		conn_write_chain(r->conn, *chain);
+		*chain = NULL;
+	}
 }
 
 void req_proxy_finished_handler(req_t *r, void *data) {
 	DBGTRACE();
 	proxy_t *p = data;
-	int id;
-	id = req_get_proxy_id(r, p);
-	if (id < 0) { return; }
+	req_proxy_info_t *rpi;
+	rpi = get_proxy_info(r, p);
 
-	buf_t *chain = r->proxy_chains[id];
-	r->proxy_chains[id] = NULL;
-	buf_print_chain(chain);
-	conn_send_and_close(r->conn, chain);
+	rpi->finished = 1;
+
+	for (rpi = r->proxy_info; rpi; rpi=rpi->next) {
+		if (!rpi->finished) {
+			return;
+		}
+	}
+
+	conn_send_and_close(r->conn, NULL);
 }
 
 void req_init_proxy(req_t *r) {
@@ -105,20 +163,17 @@ void req_init_proxy(req_t *r) {
 	}
 	r->inbound_proxy_data_handler = req_inbound_proxy_data_handler;
 	r->proxy_finished_handler = req_proxy_finished_handler;
-	int id = r->used_proxy_chains;
-	r->used_proxy_chains++;
-	if (r->used_proxy_chains > r->n_proxy_chains) {
-		r->n_proxy_chains++;
-		r->proxy_chains = realloc(r->proxy_chains, r->n_proxy_chains * sizeof(buf_t*));
-		r->proxy_chains[id] = NULL;
-	}
-	if (r->proxies) {
-		for (pl=r->proxies; pl->next; pl=pl->next){}
-		pl->next = newproxy;
+
+	req_proxy_info_t *rpi;
+	rpi = req_proxy_info_new();
+	if (!r->proxy_info) {
+		r->proxy_info = rpi;
 	} else {
-		r->proxies = newproxy;
-		newproxy->next = NULL;
+		req_proxy_info_t *iter;
+		for (iter = r->proxy_info; iter->next; iter=iter->next){}
+		iter->next = rpi;
 	}
+	rpi->p = newproxy;
 }
 
 void req_read_request(conn_t *conn, void *data) {
@@ -153,6 +208,7 @@ void req_read_request(conn_t *conn, void *data) {
 	conn->in = NULL;
 	conn_read_done(conn);
 	req_init_proxy(r);
+	req_init_proxy(r);
 }
 
 void req_read_init_request(conn_t *conn, void *data) {
@@ -165,6 +221,7 @@ void req_read_init_request(conn_t *conn, void *data) {
 		return;
 	}
 	r->conn = conn;
+	r->stream = 1;
 	conn->read_handler = req_read_request;
 	req_read_request(conn, data);
 }
@@ -182,26 +239,12 @@ int req_init_inbound(conn_t *c) {
 	return 0;
 }
 
-int req_get_proxy_id(req_t *r, proxy_t *p) {
-	DBGTRACE();
-	int i;
-	proxy_t *plist;
-	for (i = 0, plist=r->proxies; plist; i++, plist=plist->next) {
-		if (plist == p) {
-			return i;
-		}
-	}
-	log_write(LOG_ERROR, "[%s] proxy(%p) not in req(%p)'s list of proxies!\n",
-			__FUNCTION__, p, r);
-	return -1;
-}
-
 void req_handoff_proxy_chain(req_t *r, proxy_t *p, buf_t *in) {
 	DBGTRACE();
-	int id;
-	id = req_get_proxy_id(r, p);
-	if (id < 0) { return; }
-	buf_append_chain(&r->proxy_chains[id], in);
+	req_proxy_info_t *rpi;
+	rpi = get_proxy_info(r, p);
+	if (!rpi) return;
+	buf_append_chain(&rpi->chain, in);
 	if (r->inbound_proxy_data_handler) {
 		r->inbound_proxy_data_handler(r, p);
 	}

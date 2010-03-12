@@ -30,6 +30,7 @@ void send_dummy_request(conn_t *c) {
 }
 
 void proxy_close_handler(conn_t *c, void *data) {
+	DBGTRACE();
 	proxy_t *p = c->data;
 	proxy_free(p);
 }
@@ -53,7 +54,9 @@ void proxy_read_close_handler(conn_t *c, void *data) {
 
 void proxy_read_handler(conn_t *c, void *data) {
 	DBGTRACE();
-	buf_print_chain(c->in);
+	proxy_t *p = c->data;
+	//buf_print_chain(c->in);
+	proxy_handoff_chain(&p->conn->in, p);
 }
 
 void proxy_send_request(proxy_t *p) {
